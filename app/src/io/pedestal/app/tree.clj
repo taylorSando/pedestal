@@ -73,8 +73,11 @@
     true))
 
 (defn- parent-exists? [tree path]
+  ;; If the path is the root, we know it exists already
   (if (= path [])
     true
+    ;; Otherwise, remove the last element from the path, expand it.
+    ;; This is the parent path.  See if it exists in the tree.
     (let [r-path (real-path (vec (butlast path)))]
       (get-in tree r-path))))
 
@@ -83,6 +86,8 @@
     :function
     (first delta)))
 
+;; Dispatch on the type of delta
+;; Takes a tree and delta as arguments
 (defmulti ^:private apply-to-tree apply-to-tree-dispatch)
 
 (defmethod apply-to-tree :default [tree _]
@@ -90,20 +95,28 @@
 
 (declare map->deltas)
 
-(defmethod apply-to-tree :node-create [tree delta]
+(defmethod apply-to-tree :node-create [tree delta]  
   (let [[_ path type] delta]
     (if (map? type)
       (reduce apply-to-tree tree (map->deltas type path))
+      ;; If type is nil, it wasn't specified, and by default it's :map
       (let [type (or type :map)
+            ;; Need to add map as a type to the delta if it doesn't exist, which is the
+            ;; case if there are only 2 items in the delta, otherwise, leave it alone
             delta (if (= (count delta) 2) [:node-create path type] delta)
+            ;; Set the path to its longhand version.
             r-path (real-path path)
             children (condp = type
                        :vector []
                        :map {})
+            ;; Find out if the given path's parent exists in the tree already                        
             tree (if (parent-exists? tree path)
+                   ;; If it does already exist, then it does not need to be created
                    tree
+                   ;; Otherwise, need to recursively create the parent elements
                    (let [children-type (if (keyword? (last path)) :map :vector)]
                      (apply-to-tree tree [:node-create (vec (butlast path)) children-type])))]
+        
         (assert (parent-exists? tree path)
                 (str "The parent of " path " does not exist."))
         (assert (existing-node-has-same-type? tree r-path type)
@@ -112,8 +125,13 @@
                      (get-in tree r-path) "\n"
                      "delta:\n"
                      delta))
+        ;; If the expanded path is now in the tree, return the tree
         (if (get-in tree r-path)
           tree
+          ;; Given that the path to this node exists, create its children,
+          ;; which will be either a vector, or a map, which was specified above.
+          ;; Then place the delta that was used to create the node in :this-tx,
+          ;; which holds all the deltas that were actually used in the transaction
           (-> tree
               (assoc-in r-path (new-node children))
               (update-in [:this-tx] conj delta)))))))
@@ -133,39 +151,72 @@
                                   (child-keys children))))
 
 (defmethod apply-to-tree :node-destroy [tree delta]
+  "Removes a node, and all of its children, from the tree"
   (let [[_ path type] delta
+        ;; Convert the shortform path to the long form
         r-path (real-path path)
+        ;; Get the parent path of the long form
         containing-path (butlast r-path)
+        ;; This is the node that the long form path points to
         node-to-remove (get-in tree r-path)
+        ;; Get its children
         children (:children node-to-remove)
+        ;; children-type
         type (or type (node-type children))
+        ;; If type was not specified, add it to the end of the delta
         delta (if (= (count delta) 2) (conj delta type) delta)]
+    ;; Is there a node to remove?
     (if (not node-to-remove)
-      tree
+      tree ;; Return the tree without doing anything
+      ;; There is a node to remove, therefore, make sure the type requested for deletion matches
+      ;; the actual child type
       (do (assert (= (node-type children) type)
                   (str "The given child node type does not match the actual type: "
                        (pr-str delta)))
+          ;; Does this node we are removing have any children?
           (let [tree (if (not (empty? children))
+                       ;; Must recursively remove the children first
                        (remove-children tree path children)
+                       ;; Just return the tree, it has no children
                        tree)
+                ;; Does this node have any value associated with it?
                 tree (if (:value node-to-remove)
+                       ;; Make sure that the value is set to nil, and removed
                        (apply-to-tree tree [:value path (:value node-to-remove) nil])
+                       ;; There is no value associated with the node, so do nothing
                        tree)
+                ;; Does this node have any transforms associated with it?
                 tree (if-let [ks (:transforms node-to-remove)]
+                       ;; Remove the transforms
                        (reduce apply-to-tree tree (map (fn [[k v]] [:transform-disable path k]) ks))
+                       ;; Do nothing, there are no transforms
                        tree)
+                ;; Does this node have any attributes associated with it?
                 tree (if-let [ks (:attrs node-to-remove)]
+                       ;; Remove the attrs
                        (reduce apply-to-tree tree (map (fn [[k v]] [:attr path k v nil]) ks))
+                       ;; There are no attributes associated with the node
                        tree)
+                ;; Create the new tree,
+                ;; Does the parent path to this node exist?
+                ;; If it does exist, the tree should no longer contain a reference to this node
+                ;; that we are deleting
                 new-tree (if (nil? containing-path)
+                           ;; There is no parent path, so this node is the root, since we're deleting
+                           ;; the root node, there is no tree left, so it's nil
                            (assoc tree :tree nil)
+                           ;; There is a parent node above the node, therefore, need to remove
+                           ;; the references in the tree from the parent to the node we're deleting
                            (let [last-path (last r-path)
                                  container (get-in tree containing-path)]
+                             ;; Removal is based on whether the node is a map or a vector
                              (if (map? container)
                                (update-in tree containing-path dissoc last-path)
                                (update-in tree containing-path remove-index-from-vector last-path))))]
+            ;; Update the :this-tx to include this delta, so that there is a record of the node removal
             (update-in new-tree [:this-tx] conj delta))))))
 
+;; Is this even used?
 (defmethod apply-to-tree :children-exit [tree delta]
   (let [[_ path] delta
         r-path (real-path path)
@@ -179,21 +230,37 @@
   (= (get-in tree path) v))
 
 (defn update-or-remove [tree path v]
+  "Either change the value (v) stored at the given node in the tree, or remove the value at the node
+This is a helper function used for both :value and :attrs"
   (if (nil? v)
     (update-in tree (butlast path) dissoc (last path))
     (assoc-in tree path v)))
 
 (defmethod apply-to-tree :value [tree delta]
+  "Change the value associated with a node, requires the old and new value"
   (let [[op path o n] delta
+        ;; Get the long form of the path
         r-path (real-path path)
+        ;; Get the path to the value from the long form
+        ;; to look up in the tree
         v-path (conj r-path :value)
+        ;; Grab the value that is presently in the tree, which will be the old value
         old-value (get-in tree v-path)
+        ;; The delta should have four items.  If it has something else
+        ;; set n to be o, which is what the old value is suppose to be
         [o n] (if (= (count delta) 4) [o n] [old-value o])]
+    ;; This makes sure that what is really in the node, old-value, matches what was
+    ;; specified by the user, o.
     (assert (= o old-value)
             (str "The old value at path " path " is " old-value
                  " but was expected to be " o "."))
+    ;; If the old value and the new value are the same
     (if (= o n)
+      ;; Nothing needs to be done
       tree
+      ;; Otherwise, change the value at the node
+      ;; Add this delta to the :this-tx in the tree since
+      ;; it changed the tree
       (-> tree
           (update-or-remove v-path n)
           (update-in [:this-tx] conj [op path o n])))))
@@ -205,17 +272,27 @@
 
 (defmethod apply-to-tree :attr [tree delta]
   (let [[op path k o n] delta
+        ;; Get the long path to the node in the tree
         r-path (real-path path)
+        ;; Get the path to the attribute in the tree
         a-path (conj r-path :attrs k)
+        ;; Get the previous value of the attribute
         old-value (get-in tree a-path)
+        ;; Make sure that the proper number of arguments exist
         [o n] (if (= (count delta) 5) [o n] [old-value o])]
+    ;; Need to make sure what was specified by the user matches what is actually
+    ;; in the tree's node's attribute right now
     (assert (= o old-value)
             (str "Error:" (pr-str delta) "\n"
                  "The old attribute value for " k " is "
                  old-value
                  " but was expected to be " o "."))
+    ;; If the old value matches the new value
     (if (= o n)
+      ;; Nothing needs to be done
       tree
+      ;; Otherwise, change the value associated with the given attribute key
+      ;; Store the delta transaction in :this-tx as a record of what happened
       (-> tree
           (update-or-remove a-path n)
           (remove-empty (conj r-path :attrs))
@@ -226,30 +303,49 @@
 
 (defmethod apply-to-tree :transform-enable [tree delta]
   (let [[_ path k msgs] delta
+        ;; Get the long path to the node in the tree
         r-path (real-path path)
+        ;; Get the path to the transform in the node
         e-path (conj r-path :transforms k)]
+    ;; Make sure a transform with the same key does not already exist in the node that contains a different message.    
     (assert (or (not (get-in tree e-path))
                 (same-transform? tree e-path msgs))
             (str "A different transform " k " at path " path " already exists."))
+    ;; If the same transform already exists
     (if (get-in tree e-path)
+      ;; do nothing
       tree
+      ;; Otherwise, add the transform to the node, and add the delta
+      ;; to :this-tx to record what happened
       (-> tree
           (assoc-in e-path msgs)
           (update-in [:this-tx] conj delta)))))
 
 (defmethod apply-to-tree :transform-disable [tree delta]
   (let [[_ path k] delta
+        ;; Get the long path to the node in the tree
         r-path (real-path path)
+        ;; Get the path to all the transforms in the node
         transforms-path (conj r-path :transforms)
+        ;; Get the path to the transform specified by k in the transforms
         e-path (conj transforms-path k)]
+    ;; Get the transform
     (if (get-in tree e-path)
+      ;; Make a record of the delta removal in :this-tx in the tree
+      ;; Remove the transform fom the node's transforms
       (-> tree
           (update-in [:this-tx] conj (conj delta (get-in tree e-path)))
           (update-in transforms-path dissoc k)
           (remove-empty transforms-path))
+      ;; The transform did not exist, so do nothing
       tree)))
-
+ 
 (defn- node-deltas [{:keys [value transforms attrs]} path]
+  "Takes two arguments, a node and a path.
+Extract the value, attrs and transforms from the node, and places them all in a vector in a sequence.
+e.g.
+ (node-deltas {:value :val :attrs {:x :y} :transforms {:g [:h :i]}}  [:a :b])
+ ([:value [:a :b] :val] [:attr [:a :b] :x :y] [:transform-enable [:a :b] :g [:h :i]])"
   (concat []
           (when value [[:value path value]])
           (when attrs (vec (map (fn [[k v]]
@@ -259,13 +355,32 @@
                                    [:transform-enable path k v])
                                  transforms)))))
 
+;; The standardized deltas
+;; is a list/sequence where each element contains a vector.  The vector contains either:
+;; node-create, node-destroy, transform-enable, value, attr or transform-disable.
+;; op path value(s)
+#_([:node-create [] :map] [:node-create [:a] :map] [:value [:a] 42] [:attr [:a] :color :red] [:attr [:a] :size 10] [:transform-enable [:a] :x [{:y :z}]] [:node-create [:a :b] :map] [:node-create [:a :b :c] :vector] [:node-create [:a :b :c 0] :map] [:value [:a :b :c 0] 2] [:transform-enable [:a :b :c 0] :f [{:x :p}]] [:node-create [:a :b :c 1] :map] [:value [:a :b :c 1] 3] [:attr [:a :b :c 1] :color :blue])
+
 (defn- map->deltas [tree path]
+  "Converts a map with :children :transforms :value and :attrs keys into a series of standard delta vectors.
+This will recursively call itself until the entire map structure has been converted"
+  ;; A node contains these keys
   (let [node-keys #{:children :transforms :value :attrs}
+        ;; If the tree is a map, and it contains at least one of the node keys, node? will be true
         node? (and (map? tree) (not (empty? (set/intersection (set (keys tree)) node-keys))))
+        ;; If this is a node, it could have children, so get them, otherwise, just return the tree
         children (if node? (or (:children tree) {}) tree)
+        ;; Children can be either :vector or :map
         children-type (node-type children)
+        ;; If the tree is a node, then extract the value, attrs and transforms from it
+        ;; These will be separate deltas later on
         node-deltas (when node?
                       (node-deltas tree path))]
+    ;; Create the node with the given path, which will recursively create all the parent nodes
+    ;; if required.
+    ;; Then, add the deltas that represent the node's attrs, value and transforms
+    ;; Finally, extract all the children nodes, and recursively call map->deltas on it.
+    ;; This will extract the children's deltas and standardize them in the vector delta form
     (concat [[:node-create path children-type]]
             node-deltas
             (mapcat (fn [k]
@@ -276,12 +391,16 @@
                           (range (count children))
                           :else [])))))
 
+;; This should probably get renamed to standardize delta
 (defn expand-map [delta]
+  "Convert a delta map into a standard delta vector, or leave it alone"
   (if (map? delta)
     (map->deltas delta [])
     [delta]))
 
 (defn- expand-maps [deltas]
+  "Given a series of deltas, which may be in map format, must call expand-map on each of them to convert them all
+into the standard delta vector format"
   (mapcat expand-map deltas))
 
 (defn- update-tree
@@ -385,6 +504,9 @@
 ;; Public API
 ;; ================================================================================
 
+
+
+
 (defn apply-deltas
   "Given an old tree and a sequence of deltas, return an updated tree.
   The deltas can be a sequence of tuples or a map which can be
@@ -393,15 +515,29 @@
   The keyword :commit can be inserted into the stream of deltas to force
   a commit at a specific point."
   [old deltas]
+  ;; Get the old sequence and transaction number
   (let [{:keys [seq t]} old
+        ;; Convert the deltas into a vector format if they are in map form
+        ;; otherwise leave them alone.  Probably should be called standardize deltas.
         deltas (expand-maps deltas)
+        ;; Using the deltas, update the tree using the old tree
         {:keys [tree this-tx]} (update-tree old deltas)
+        ;; The previous deltas may have created their own deltas within the transaction
+        ;; Increment the sequence number, and extract each of these deltas
+        ;; This may represent the deltas that were used to create the actual transaction
         deltas (map (fn [d s]
                       {:delta d
                        :t t
                        :seq s})
                     this-tx
                     (iterate inc seq))]
+    ;; Associate the deltas from this transaction into [:deltas t], where t represents
+    ;; the transaction number
+    ;; this-tx is now empty, there are no more deltas to process
+    ;; There were a certain number of deltas added, therefore, the number of sequences in this
+    ;; transaction need to be increased by this amount
+    ;; The updated tree is put in :tree
+    ;; The transaction number is incremented
     (-> old
         (assoc-in [:deltas t] deltas)
         (assoc-in [:this-tx] [])
@@ -416,6 +552,24 @@
 (defn node-exists? [tree path]
   (let [r-path (real-path path)]
     (get-in tree r-path)))
+
+
+;; :deltas are indexed by the transaction id
+;; e.g. {0 {:delta [delta-vector] :seq 0 :t 0
+;;         {:delta [delta-vector] :seq 1 :t 0
+;;       1 {:delta [delta-vector] :seq 2 :t1}}
+;; Multiple deltas can have the same :t, but can't have same seq number
+
+;; The tree is represented in long form as:
+;; {:children {:x {:value 42, :attrs {}, :transforms: {}, :children {}}}}
+;; children can be maps or vectors
+
+;; delta values:
+;; [:value [path] <old-value> <new-value>]
+;; delta attrs
+;; [:attrs [path] <key> <old-value> <new-value>]
+;;
+
 
 (def new-app-model
   (map->Tree
