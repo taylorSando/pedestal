@@ -101,10 +101,10 @@
       (reduce apply-to-tree tree (map->deltas type path))
       ;; If type is nil, it wasn't specified, and by default it's :map
       (let [type (or type :map)
-            ;; Need to add map as a type to the delta if it doesn't exist, which is the
-            ;; case if there are only 2 items in the delta, otherwise, leave it alone
+            ;; The node create delta requires a type, so if it wasn't specified, i.e., there are only 2 arguments,
+            ;; then it needs to be added.  By default, the type is a map
             delta (if (= (count delta) 2) [:node-create path type] delta)
-            ;; Set the path to its longhand version.
+            ;; Set the path to its expanded tree form
             r-path (real-path path)
             children (condp = type
                        :vector []
@@ -113,10 +113,9 @@
             tree (if (parent-exists? tree path)
                    ;; If it does already exist, then it does not need to be created
                    tree
-                   ;; Otherwise, need to recursively create the parent elements
+                   ;; Otherwise, need to recursively create the parent nodes
                    (let [children-type (if (keyword? (last path)) :map :vector)]
                      (apply-to-tree tree [:node-create (vec (butlast path)) children-type])))]
-        
         (assert (parent-exists? tree path)
                 (str "The parent of " path " does not exist."))
         (assert (existing-node-has-same-type? tree r-path type)
@@ -125,7 +124,7 @@
                      (get-in tree r-path) "\n"
                      "delta:\n"
                      delta))
-        ;; If the expanded path is now in the tree, return the tree
+        ;; If the node specified by the expanded path is now in the tree, return the tree
         (if (get-in tree r-path)
           tree
           ;; Given that the path to this node exists, create its children,
@@ -141,12 +140,15 @@
     (into (vec begin) (rest end))))
 
 (defn- child-keys [children]
+  "Extracts the keys of the child
+Returns the key names if it's a map, or the vector indexes if the child is a vector"
   (condp = (node-type children)
     :map (keys children)
     :vector (reverse (range (count children)))
     :else []))
 
 (defn- remove-children [tree path children]
+  "Remove all the children from the tree specified by the path"
   (reduce apply-to-tree tree (map (fn [k] [:node-destroy (conj path k)])
                                   (child-keys children))))
 
@@ -355,11 +357,7 @@ e.g.
                                    [:transform-enable path k v])
                                  transforms)))))
 
-;; The standardized deltas
-;; is a list/sequence where each element contains a vector.  The vector contains either:
-;; node-create, node-destroy, transform-enable, value, attr or transform-disable.
-;; op path value(s)
-#_([:node-create [] :map] [:node-create [:a] :map] [:value [:a] 42] [:attr [:a] :color :red] [:attr [:a] :size 10] [:transform-enable [:a] :x [{:y :z}]] [:node-create [:a :b] :map] [:node-create [:a :b :c] :vector] [:node-create [:a :b :c 0] :map] [:value [:a :b :c 0] 2] [:transform-enable [:a :b :c 0] :f [{:x :p}]] [:node-create [:a :b :c 1] :map] [:value [:a :b :c 1] 3] [:attr [:a :b :c 1] :color :blue])
+
 
 (defn- map->deltas [tree path]
   "Converts a map with :children :transforms :value and :attrs keys into a series of standard delta vectors.
@@ -405,8 +403,7 @@ into the standard delta vector format"
 
 (defn- update-tree
   "Update the tree and return the actual deltas which were used to
-  update the tree. A single delta can be expanded into multiple
-  deltas."
+update the tree. A single delta can be expanded into multiple deltas."
   [tree deltas]
   (reduce apply-to-tree tree deltas))
 
@@ -418,60 +415,105 @@ into the standard delta vector format"
 ;; Query
 ;; ================================================================================
 
-(def ^:private next-eid-atom (atom 0))
+
+;; The tree nodes each have a distinct entity id
+(def ^:private next-eid-atom
+  "Holds the next entity id"
+  (atom 0))
 
 (defn- next-eid []
+  "Generates the next entity id"
   (swap! next-eid-atom inc))
 
 (defn- transform->entities [transform-name msgs node-id]
+  "Creates the transform entitiy for the given node with the specified messages"
+  ;; Generate a new entity id for the transform
   (let [transform-id (next-eid)]
+    ;; There are two parts to the transform
+    ;; The first is the transform identity, which establishes the transform's
+    ;; id, name, type and the node it belongs to
+    ;; The second part is all the messages that are associated with transform
+    ;; Each of the messages gets its own entity id, is associated with the transform identity
+    ;; and its type is :t/message
     (concat [{:t/id transform-id :t/transform-name transform-name :t/node node-id :t/type :t/transform}]
             (map (fn [m] (merge m {:t/id (next-eid) :t/transform transform-id :t/type :t/message})) msgs))))
 
 (defn- transforms->entities [transforms node-id]
+  "Creates transform entity map for each transform in transforms for the node id"
   (reduce (fn [acc [transform-name msgs]]
             (concat acc (transform->entities transform-name msgs node-id)))
           []
           transforms))
 
 (defn- attrs->entities [attrs node-id]
+  "Creates a new entity for each attr in attrs using the node id"
   (when (not (empty? attrs)) [(merge attrs {:t/id (next-eid) :t/node node-id :t/type :t/attrs})]))
 
 (defn- node->entities [node path parent-id node-id]
+  "Extracts the value, attrs and transforms from the node"
   (let [{:keys [value attrs transforms]} node
+        ;; The node entity
         node-e {:t/id node-id :t/path path :t/type :t/node :t/segment (last path)}
+        ;; Add the parent id to the node entity if it exists
         node-e (if parent-id
                  (assoc node-e :t/parent parent-id)
                  node-e)
+        ;; Add the value to the node entity if it exists
         node-e (if value
                  (assoc node-e :t/value value)
                  node-e)
+        ;; Create the attr entities for the node
         attrs-es (attrs->entities attrs node-id)
+        ;; Create the transform entities for the node
         transform-es (transforms->entities transforms node-id)]
+    ;; Return the node entity, attrs entity and the transforms entity
     (concat [node-e] attrs-es transform-es)))
 
 (defn- tree->entities [tree path parent-id]
+"Convert a tree structure into a sequence of node entities.  Each entity contains an entity id (:t/id), 
+entity type (:t/type), and values specific for the entity, i.e. :t/parent, :t/segment, :t/message, etc"  
   (let [{:keys [children]} tree
+        ;; child keys
         ks (child-keys children)
+        ;; Assign the next node id
         node-id (next-eid)
+        ;; Create entities for each of the value, attrs and transforms in the node
+        ;; specified by the path in the tree
         node-tuples (node->entities tree path parent-id node-id)]
+    ;; Return the top level node and recursively convert all of its children
+    ;; nodes into entities
     (concat node-tuples
             (mapcat (fn [k] (tree->entities (get-in tree [:children k]) (conj path k) node-id))
                     ks))))
 
 (defn- entity->tuples [e]
+  "Converts an entity map into a tuple
+e.g.
+ {:t/id 4 :t/path [:a :b] :t/type :t/node :t/segment :a :t/value 5}
+becomes ([4 :t/path [:a :b]] [4 :t/type :t/node] [4 :t/segment :a] [4 :t/value 5])"
+  ;; Save the entity id
   (let [id (:t/id e)]
+    ;; Convert the entity map into a sequence of vectors
+    ;; Where each vector's first element is the :t/id
+    ;; The second element is the map's key
+    ;; The third element is the map's value
     (map (fn [[k v]] [id k v]) (dissoc e :t/id))))
 
 (defn- entities->tuples [entities]
+  "Convert every entity map into a sequence of tuples"
   (mapcat entity->tuples entities))
 
 (defn- tree->tuples [tree]
+  "Converts a tree to a series of tuples and vectors"
   (if (:tree tree)
     (entities->tuples
+     ;; Convert the tree into map entities
      (tree->entities (:tree tree) [] nil))
     []))
 
+;;A record type that can hold the application state
+;; It implements the TupleSource protocol of query
+;; This allows the tree to be queried
 (defrecord Tree []
   query/TupleSource
   (tuple-seq [this]
@@ -518,7 +560,7 @@ into the standard delta vector format"
   ;; Get the old sequence and transaction number
   (let [{:keys [seq t]} old
         ;; Convert the deltas into a vector format if they are in map form
-        ;; otherwise leave them alone.  Probably should be called standardize deltas.
+        ;; otherwise leave them alone.  
         deltas (expand-maps deltas)
         ;; Using the deltas, update the tree using the old tree
         {:keys [tree this-tx]} (update-tree old deltas)
@@ -535,7 +577,7 @@ into the standard delta vector format"
     ;; the transaction number
     ;; this-tx is now empty, there are no more deltas to process
     ;; There were a certain number of deltas added, therefore, the number of sequences in this
-    ;; transaction need to be increased by this amount
+    ;; transaction needs to be increased by this amount
     ;; The updated tree is put in :tree
     ;; The transaction number is incremented
     (-> old
@@ -552,23 +594,6 @@ into the standard delta vector format"
 (defn node-exists? [tree path]
   (let [r-path (real-path path)]
     (get-in tree r-path)))
-
-
-;; :deltas are indexed by the transaction id
-;; e.g. {0 {:delta [delta-vector] :seq 0 :t 0
-;;         {:delta [delta-vector] :seq 1 :t 0
-;;       1 {:delta [delta-vector] :seq 2 :t1}}
-;; Multiple deltas can have the same :t, but can't have same seq number
-
-;; The tree is represented in long form as:
-;; {:children {:x {:value 42, :attrs {}, :transforms: {}, :children {}}}}
-;; children can be maps or vectors
-
-;; delta values:
-;; [:value [path] <old-value> <new-value>]
-;; delta attrs
-;; [:attrs [path] <key> <old-value> <new-value>]
-;;
 
 
 (def new-app-model
@@ -593,3 +618,35 @@ into the standard delta vector format"
   [tree t]
   (let [ts (range t (:t tree))]
     (vec (map :delta (mapcat #(get (:deltas tree) %) ts)))))
+
+
+
+
+(comment
+  ;; The standardized deltas
+  ;; is a list/sequence where each element contains a vector.  The vector contains either:
+  ;; node-create, node-destroy, transform-enable, value, attr or transform-disable.
+  ;; op path value(s)
+  #_([:node-create [] :map] [:node-create [:a] :map] [:value [:a] 42] [:attr [:a] :color :red] [:attr [:a] :size 10] [:transform-enable [:a] :x [{:y :z}]] [:node-create [:a :b] :map] [:node-create [:a :b :c] :vector] [:node-create [:a :b :c 0] :map] [:value [:a :b :c 0] 2] [:transform-enable [:a :b :c 0] :f [{:x :p}]] [:node-create [:a :b :c 1] :map] [:value [:a :b :c 1] 3] [:attr [:a :b :c 1] :color :blue])
+
+
+  ;; This is how the app tree is specified:
+;; :deltas are indexed by the transaction id
+;; e.g. {0 {:delta [delta-vector] :seq 0 :t 0
+;;         {:delta [delta-vector] :seq 1 :t 0
+;;       1 {:delta [delta-vector] :seq 2 :t1}}
+;; Multiple deltas can have the same :t, but can't have same seq number
+
+;; The tree is represented in long form as:
+;; {:children {:x {:value 42, :attrs {}, :transforms: {}, :children {}}}}
+;; children can be maps or vectors
+
+;; delta values:
+;; [:value [path] <old-value> <new-value>]
+;; delta attrs
+;; [:attrs [path] <key> <old-value> <new-value>]
+
+  
+
+
+  )

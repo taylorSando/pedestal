@@ -831,6 +831,8 @@
 (def test-tree
   (apply-deltas new-app-model deltas))
 
+
+
 (deftest test-tree-queries
   (testing "query for"
     (testing "all path segments"
