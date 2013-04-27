@@ -45,39 +45,81 @@
   (html-resource (java.io.StringReader. s)))
 
 (defn- html-body [name]
+  "Extracts the body content from the file if it exists, or returns the sequence of nodes if there is no body."
   (let [nodes (html-resource name)]
     (or
      (:content (first (select nodes [:body])))
      nodes)))
 
 (defn- include-html [h]
+  "Locate and replace all of the _include html tags with the file content that they specify"
+  ;; Find all the _include tags in the html
   (let [includes (select h [:_include])]
+    ;; h is the html
     (loop [h h
            includes (seq includes)]
+      ;; Make sure there are still includes
       (if includes
+        ;; Extract the first include's file attribute
         (let [file (-> (first includes) :attrs :file)
+              ;; Extract the include file's html
+              ;; This could cause a recursive call, because construct-html while look for
+              ;; includes within the file.  This will find all child includes.
               include (construct-html (html-body file))]
+          ;; At this point, all the child includes for this include should have been located
+          ;; The include that had the file attribute above will be replaced by what was
+          ;; found in the include above
+          ;; Using this new html, start processing the next top level include
           (recur (transform h [[:_include (attr= :file file)]] (substitute include))
                  (next includes)))
         h))))
 
-(defn- maps [c] (filter map? c))
+(defn- maps [c]
+  "Extract all the maps from the sequence"
+  (filter map? c))
 
 (defn- replace-html [h c]
+  "Within the html, h, substitute with the content, c, where the id and tag in c match
+   within h."
+  ;; Get the id attribute of the content
   (let [id (-> c :attrs :id)
+        ;; Extract the tag from the content
         tag (:tag c)
+        ;; Create a css selector for the id and tag so that it
+        ;; can be selected
         selector (keyword (str (name tag) "#" id))]
+    ;; In the html, find the content that matches the selector
+    ;; and substitute it with the content
     (transform h [selector] (substitute c))))
 
 (defn- wrap-html [h]
+  "Insert the content inside the within tags in the html that is specified by the file attribute of the
+   _within tag.
+   Given an html snippet, h, locate the within tags inside, and grab the content inside of it.  Then,
+   identify the file that correspondsd to the file attribute of the _within tag.  The idea is that the
+   content inside the _within tag matches entities in the file specified by the attribute of _within.
+   For example, let us say that there is a file called sample.html.  It contains the following:
+   <_within file=\"example.html\"><div id=\"content\">I am the new content</div>
+   This means that the file example.html should contain a reference to <div id=\"content\"></div>
+   and that the inner html of div#content will be replaced by I am the new content, which was specified
+   inside of sample.html"
+  ;; Select all of the within tags
   (let [within (seq (select h [:_within]))]
+    ;; Make sure there are tags to process
     (if within
+      ;; Extract the file attribute within the first within tag
       (let [file (-> (first within) :attrs :file)
+            ;; Extract the html from the file (this could have includes within it)
             outer (construct-html (html-resource file))
-            content (maps (:content (first within)))]
+            ;; Grab the content that is a map in the first within tag
+            ;; This would be all the child content that are tags, not text
+            content (maps (:content (first within)))]        
         (loop [outer outer
                content (seq content)]
+          ;; If there is child content to process
           (if content
+            ;; Within the outer content, need to stick the content inside of it
+            ;; replacing where the id/tag of the content match in the outer html
             (recur (replace-html outer (first content)) (next content))
             outer)))
       h)))
@@ -215,12 +257,17 @@
 
 (defn tnodes
   ([file name]
+     ;; Extract the html from the file
+     ;; Then select all the nodes that have template tags
+     ;; that match the template name
      (select (html-resource file) [(attr= :template name)]))
   ([file name empty]
-     (reduce (fn [a b]
+     (reduce (fn [a b]               
                (transform a b (html-content "")))
              (construct-html (tnodes file name))
              empty)))
 
 (defn template-children [file name]
   (select (html-resource file) [(attr= :template name) :> :*]))
+
+
