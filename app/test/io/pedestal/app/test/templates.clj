@@ -1,5 +1,6 @@
 (ns io.pedestal.app.test.templates
   (:require [io.pedestal.app.templates :as tmp]
+            [net.cgrand.enlive-html :as enlive]
             [clojure.java.io :as io])
   (:use clojure.test))
 
@@ -41,15 +42,60 @@
   (cond
     (= (count bindings) 0) `(do ~@body)
     (symbol? (bindings 0)) `(let [~(bindings 0) (str relative-path-to-template-loc "/" ~(bindings 1))]
-                              (let [absf# (str template-file-loc "/" ~(bindings 1))]
-                                (spit absf# ~(bindings 2))
+                              (let [absf# (str template-file-loc "/" ~(bindings 1))]                                
                                 (try
+                                  (spit absf# ~(bindings 2))
                                   (with-html-files ~(subvec bindings 3)                                    
                                     ~@body)
                                   (finally
                                     (io/delete-file absf#)))))
     :else (throw (IllegalArgumentException.
                    "with-open only allows Symbols in bindings"))))
+
+(defn remove-html-whitespace [h]
+  "A helper method for removing unnecessary whitespace in html, aides in testing if two html strings are the same.
+   Don't need to worry about whitespace not being equal.  Good for converting enlive nodes into a plain html string and
+   comparing them to other nodes that have been converted"
+  (->
+   (clojure.string/replace  h #"\n" "")
+   (clojure.string/replace  #" {2,}" " ")
+   clojure.string/trim))
+
+(deftest test-remove-html-whitespace  
+  (is (= (remove-html-whitespace "<div>
+       <div>
+           <div>
+             </div>
+                </div>
+                      </div>")
+   (remove-html-whitespace "<div>
+                                             <div>
+           <div>
+             </div>
+                  </div>
+           </div>"))))
+
+
+(defn html-string-equality [s1 s2]
+  "Convenience method for testing html string equality, without having to specify remove-html-whitespace for both strings"
+  (= (remove-html-whitespace s1)
+     (remove-html-whitespace s2)))
+
+(deftest test-remove-html-whitespace
+  (let [s1 "<div>
+                 <div>
+                     <div>
+                       </div>
+                     </div>
+            </div>"
+        s2 "<div>
+                                             <div>
+                        <div>
+             </div>
+                  </div>
+                                 </div>"]
+    (is (= (html-string-equality s1 s2)))
+    (is (= (html-string-equality s2 s1)))))
 
 (deftest test-html-parse
   "Make sure that the proper enlive data structure is generated from a valid string of html.  
@@ -68,6 +114,24 @@
                             ({:tag :a, :attrs {:href "http://www.facebook.com/"}, :content ("Facebook")})})})}))
       "<html><body><div><a href=\"http://www.facebook.com/\">Facebook</a></div></body></html>")))
 
+
+(defn enlive-html-equality [nodes1 nodes2]
+  "When given two enlive sequence of nodes, tests whether they are equal or not"
+  (= (remove-html-whitespace (tmp/render nodes1))
+     (remove-html-whitespace (tmp/render nodes2))))
+
+(deftest test-enlive-html-equality
+  (testing
+      "Need to make sure that html strings that specify the same dom content are equal, even if the string may
+       contain different whitespace characters that don't actually affect the dom structure"
+      (let [s1 "<div id='id-5><div class='inner'>I am some content</div></div>"
+            s2 "<div id='id-5>
+                <div class='inner'>
+                   I am some content
+                </div>
+             </div>"]
+        (is (= (enlive-html-equality (tmp/render s1) (tmp/render s2)))))))
+
 (deftest test-html-body
   (testing "Should extract the body content from an html file"
     (with-html-files [h "hello.html" "<html><body><div>The div content</div></body></html>"]
@@ -78,60 +142,107 @@
       (is (= (@#'tmp/html-body h)
              '({:tag :div :attrs nil :content ("The div content")}))))))
 
-
-
-"<div>I am from the child</div>"
-"<html><body><div>I am from the child</div></body></html>"
-
 (deftest test-load-html
   (testing "Should load a plain bit of html without any includes"
-    (with-html-files [h "hello.html" "<html><body><div>The div content</div></body></html>"]
-      (is (= (tmp/load-html h)
-             "<html><body><div>The div content</div></body></html>"))))
-  (testing "Should be able to load a single included file.  The parent loads the child content"    
-    (let [parent-content (format "<html><body><_include file='%s/child.html' /></body></html>" relative-path-to-template-loc)
-          child-content "<div>I am from the child"]
+    (with-html-files [h "hello.html" "<html>
+                                         <body>
+                                             <div>The div content</div>
+                                         </body>
+                                       </html>"]
+      (is (html-string-equality (tmp/load-html h)
+             "<html>
+                 <body>
+                   <div>The div content</div>
+                 </body>
+               </html>"))))
+  (testing "Should be able to load a single include file.  The parent loads the child content"    
+    (let [parent-content (format "<html>
+                                     <body>
+                                       <_include file='%s/child.html' />
+                                     </body>
+                                  </html>" relative-path-to-template-loc)
+          child-content "<div>I am from the child</div>"]
         (with-html-files [parent "parent.html" parent-content child "child.html" child-content ]
-          (is (= (tmp/load-html parent)
-                 "<html><body><div>I am from the child</div></body></html>")))))  
+          (is (html-string-equality (tmp/load-html parent)
+                 "<html>
+                     <body>
+                       <div>I am from the child</div>
+                      </body>
+                   </html>")))))  
   (testing
       "Should be able to load a child file that has a within tag, referencing the parent.  The child will be expanded
        into the parent's content"
-    (let [parent-content (format "<html><body><div id='content'></div></body></html>" relative-path-to-template-loc)
-          child-content (format "<_within file='%s/parent.html'><div id='content'>I am child content</div></within>"
+    (let [parent-content (format "<html>
+                                    <body>
+                                       <div id='content'></div>
+                                    </body>
+                                   </html>" relative-path-to-template-loc)
+          child-content (format "<_within file='%s/parent.html'>
+                                      <div id='content'>I am child content</div>
+                                  </within>"
                                 relative-path-to-template-loc)]
         (with-html-files [parent "parent.html" parent-content child "child.html" child-content ]
-          (is (= (tmp/load-html child)
-                 "<html><body><div id=\"content\">I am child content</div></body></html>")))))
+          (is (html-string-equality (tmp/load-html child)
+                                    "<html>
+                                         <body>
+                                            <div id=\"content\">I am child content</div>
+                                         </body>
+                                     </html>")))))
 
   (testing
-      "Load a child file, which has a within tag.  It references a parent.  The parent  has a reference to an include tag.
+      "Load a child file, which has a within tag.  It references a parent.  The parent has a reference to an include tag.
        The include tag is a reference to a second child."
-    (let [parent-content (format "<html><body><_include file='%s/child2.html' /><div id='content'></div></body></html>"
+    (let [parent-content (format "<html>
+                                     <body>
+                                       <_include file='%s/child2.html' />
+                                       <div id='content'></div>
+                                     </body>
+                                  </html>"
                                  relative-path-to-template-loc relative-path-to-template-loc)
-          child-within-content (format "<_within file='%s/parent.html'><div id='content'>I am child content 1</div></within>"
+          child-within-content (format "<_within file='%s/parent.html'>
+                                           <div id='content'>I am child content 1</div>
+                                        </within>"
                                 relative-path-to-template-loc)
-          child-inner-content "<div>child 2 content"]
+          child-inner-content "<div>child 2 content</div>"]
         (with-html-files [parent "parent.html" parent-content
                           child-within "child.html" child-within-content
                           child-include "child2.html" child-inner-content]
-          (is (= (tmp/load-html child-within)
-                 "<html><body><div>child 2 content</div><div id=\"content\">I am child content 1</div></body></html>")))))
+          (is (html-string-equality (tmp/load-html child-within)
+                 "<html>
+                       <body>
+                           <div>child 2 content</div>
+                           <div id=\"content\">I am child content 1</div>
+                       </body>
+                  </html>")))))
 
   (testing
       "Load a child file that has a within tag, and an include tag.  It will be loaded into the parent template, but it will
        also load the included child content"
-      (let [parent-content (format "<html><body><div id='content'></div></body></html>"
+      (let [parent-content (format "<html>
+                                       <body>
+                                         <div id='content'></div>
+                                       </body>
+                                    </html>"
                                    relative-path-to-template-loc relative-path-to-template-loc)
-            child-within-content (format "<_within file='%s/parent.html'><div id='content'>I am child content 1<_include file='%s/child2.html' /></div></within>" relative-path-to-template-loc relative-path-to-template-loc)
-            child-inner-content "<div>child 2 content"]
+            child-within-content (format "<_within file='%s/parent.html'>
+                                             <div id='content'>
+                                                 I am child content 1
+                                                 <_include file='%s/child2.html' />
+                                              </div>
+                                           </within>" relative-path-to-template-loc relative-path-to-template-loc)
+            child-inner-content "<div>child 2 content</div>"]
         (with-html-files [parent "parent.html" parent-content
                           child-within "child.html" child-within-content
                           child-include "child2.html" child-inner-content]
-          (is (= (tmp/load-html child-within)
-                 "<html><body><div id=\"content\">I am child content 1<div>child 2 content</div></div></body></html>")))))
-  
-  )
+          (is (html-string-equality (tmp/load-html child-within)
+                 "<html>
+                       <body>
+                           <div id=\"content\">
+                             I am child content 1
+                             <div>child 2 content</div>
+                            </div>
+                        </body>
+                   </html>"))))))
 
 
 
@@ -156,12 +267,122 @@
       "Load multiple children of the same template name"
       (with-html-files [x "x.html" "<div>
                                        <div template='t1'>
-                                          <div id='child1'>child 1 content</div>
+                                            <div id='child1'>child 1 content</div>
                                        </div>
                                        <div template='t1'>
-                                          <div id='child2'>child 2 content</div>
+                                            <div id='child2'>child 2 content</div>
                                        </div>
-                                    </div>"]
+                                      </div>"]
         (is (= (tmp/template-children x "t1")
                '({:tag :div, :attrs {:id "child1"},:content ("child 1 content")}
                  {:tag :div, :attrs {:id "child2"}, :content ("child 2 content")}))))))
+
+
+
+(deftest test-field-pairs
+  (testing "Should be able to extract a string field pair and convert it into a sequence of two elements
+            where the first element is the field type, and the second element is the field identifier"
+    (is (= (@#'tmp/field-pairs "id:id-5")
+           '(("id" "id-5")))))
+
+  (testing "Should be able to break up multiple field pairs that are delimited by commas"
+    (is (= (@#'tmp/field-pairs "id:id-5,content:name")
+           '(("id" "id-5") ("content" "name"))))))
+
+(deftest test-extract-field-attrs
+  (testing "Make sure that all the nodes containing template fields can be selected, and their attributes retrieved"
+    (let [nodes (tmp/html-parse "<div field='id:id-5'>
+                                   <div field='content:name'></div>
+                                  </div>")]     
+      (is (= (@#'tmp/extract-field-pairs nodes)
+             '("id:id-5" "content:name"))))))
+
+(deftest test-field-to-symbol-mapping
+  (testing "Make sure that all fields can be mapped to a unique symbol"
+    (let [nodes (tmp/html-parse "<div field='id:id-5'>
+                                   <div field='content:name'></div>
+                                  </div>")
+          field-names (@#'tmp/extract-field-pairs nodes)]
+      (testing "All the values should be symbols"
+        (is (every? #(symbol? %) (vals (@#'tmp/field-to-symbol-mapping field-names))) ))      
+      (testing "Two symbols should have been created"
+        (is (= 2 (count (vals (@#'tmp/field-to-symbol-mapping field-names)))))))
+    )
+
+  (testing "Fields that are the same should map to the same symbol"
+    (let [nodes (tmp/html-parse "<div field='id:id-5'>
+                                   <div field='content:name'></div>
+                                 </div>
+                                 <div field='id:id-5'></div> ")
+          field-names (@#'tmp/extract-field-pairs nodes)]
+      (testing "There were three field attributes used"
+        (is (= 3 (count field-names)))
+        )
+      (testing "However, only two symbols should have been created, because two are the same"
+        (is (= 2 (count (vals (@#'tmp/field-to-symbol-mapping field-names)))))))))
+
+(deftest test-convert-field-pair-to-map
+  (testing
+      "Test that a raw field pair string is being converted into a map.  The key is the
+       field pair identifier, and the value is a map itself, which has three attributes,
+       :field, :type and :attr-name"
+    (let [fp-map (@#'tmp/convert-field-pair-to-map "content:name")]
+      (testing "Make sure the field pair identifier is a keyword, and a key in the new map"
+        (is (contains? fp-map :name)))
+      (testing "The attr-name within the map should be equal to content"
+        (is (= (get-in fp-map [:name :attr-name]) "content")))
+      (testing "The type should be :content"
+        (is (= (get-in fp-map [:name :type]) :content)))
+      (testing "The field should be equal to the original field pair string"
+        (is (= (get-in fp-map [:name :field]) "content:name")))
+      (is (= {:name {:field "content:name" :type :content, :attr-name "content"}}))))
+  (testing "Test that a field pair with a type that isn't content, should result in a map with a type of :attr"
+    (is (= {:name {:field "x:name" :type :attr, :attr-name "x"}}
+           (@#'tmp/convert-field-pair-to-map "x:name")))
+    (is (= {:name {:field "id:name" :type :attr, :attr-name "id"}}
+           (@#'tmp/convert-field-pair-to-map "id:name")))))
+
+(deftest test-convert-field-pairs-to-map
+  (testing
+      "A sequence of field pairs should be able to be converted into a map, where the key is the field identifier
+       and the values are a map determined by the field type, with the keys :field, :type and :attr-name"    
+    (is (= (@#'tmp/convert-field-pairs-to-map '("id:id-5", "content:name"))
+           {:name {:field "content:name" :type :content, :attr-name "content"}
+            :id-5 {:field "id:id-5" :type :attr, :attr-name "id"}}))))
+
+(deftest test-create-template-map
+  (let [ts ["id:id-5" "content:name"]
+        ts-syms {"id:id-5" 'G_3001, "content:name" 'G_3002}]
+    (is (= (@#'tmp/create-template-map ts ts-syms)
+           {:id-5 {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr}
+            :name {:field "content:name" :id 'G_3002 :attr-name "content" :type :content}}
+           )))
+  )
+
+(deftest test-make-dynamic-template
+  (is (= (@#'tmp/make-dynamic-template '({:tag :div :attrs {:field "id:id-5"}})
+                                     :id-5
+                                     {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr})
+         '({:content (), :tag :div, :attrs {:field "id:id-5,id:G_3001"}}))))
+
+
+(deftest test-insert-template-symbols-into-nodes
+  (with-html-files [x "x.html" "<div template=\"t1\"><div field=\"id:id-5\"></div><div field=\"content:name\"></div></div>"]
+    (let [ts ["id:id-5" "content:name"]
+          ts-syms {"id:id-5" 'G_3001, "content:name" 'G_3002}
+          t-map (@#'tmp/create-template-map ts ts-syms)
+          nodes (tmp/tnodes x "t1")]
+      (is (= (@#'tmp/insert-template-symbols-into-nodes nodes t-map)
+             '({:tag :div, :attrs {:template "t1"},
+                :content ({:tag :div, :attrs {:field "id:id-5,id:G_3001"}, :content ()} 
+                          {:tag :div, :attrs {:field "content:name,id:G_3002"}, :content ()})}))))))
+
+(with-html-files [x "x.html" "<div template=\"t1\"><div field=\"id:id-5\"></div><div field=\"content:name\"></div></div>"]
+  (let [mk-tmp (tmp/dtfn (tmp/tnodes x "t1") #{:id-5})
+        mk-tmp (eval mk-tmp)
+        [template html] (mk-tmp)]
+    (println "Here is the temlate: ")
+    (println template)
+    (println (html {:name "adfsfsfsfsdf" :id-5 "asdfasfsd"}))
+    )
+  )
