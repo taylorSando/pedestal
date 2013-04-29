@@ -40,17 +40,17 @@
    (with-html-file a a-filename a-content b b-filename b-content ...) "
   [bindings & body]  
   (cond
-    (= (count bindings) 0) `(do ~@body)
-    (symbol? (bindings 0)) `(let [~(bindings 0) (str relative-path-to-template-loc "/" ~(bindings 1))]
-                              (let [absf# (str template-file-loc "/" ~(bindings 1))]                                
-                                (try
-                                  (spit absf# ~(bindings 2))
-                                  (with-html-files ~(subvec bindings 3)                                    
-                                    ~@body)
-                                  (finally
-                                    (io/delete-file absf#)))))
-    :else (throw (IllegalArgumentException.
-                   "with-open only allows Symbols in bindings"))))
+   (= (count bindings) 0) `(do ~@body)
+   (symbol? (bindings 0)) `(let [~(bindings 0) (str relative-path-to-template-loc "/" ~(bindings 1))]
+                             (let [absf# (str template-file-loc "/" ~(bindings 1))]                                
+                               (try
+                                 (spit absf# ~(bindings 2))
+                                 (with-html-files ~(subvec bindings 3)                                    
+                                   ~@body)
+                                 (finally
+                                   (io/delete-file absf#)))))
+   :else (throw (IllegalArgumentException.
+                 "with-open only allows Symbols in bindings"))))
 
 (defn remove-html-whitespace [h]
   "A helper method for removing unnecessary whitespace in html, aides in testing if two html strings are the same.
@@ -68,7 +68,7 @@
              </div>
                 </div>
                       </div>")
-   (remove-html-whitespace "<div>
+         (remove-html-whitespace "<div>
                                              <div>
            <div>
              </div>
@@ -112,7 +112,7 @@
                         ({:tag :body, :attrs nil, :content
                           ({:tag :div, :attrs nil, :content
                             ({:tag :a, :attrs {:href "http://www.facebook.com/"}, :content ("Facebook")})})})}))
-      "<html><body><div><a href=\"http://www.facebook.com/\">Facebook</a></div></body></html>")))
+         "<html><body><div><a href=\"http://www.facebook.com/\">Facebook</a></div></body></html>")))
 
 
 (defn enlive-html-equality [nodes1 nodes2]
@@ -124,13 +124,13 @@
   (testing
       "Need to make sure that html strings that specify the same dom content are equal, even if the string may
        contain different whitespace characters that don't actually affect the dom structure"
-      (let [s1 "<div id='id-5><div class='inner'>I am some content</div></div>"
-            s2 "<div id='id-5>
+    (let [s1 "<div id='id-5><div class='inner'>I am some content</div></div>"
+          s2 "<div id='id-5>
                 <div class='inner'>
                    I am some content
                 </div>
              </div>"]
-        (is (= (enlive-html-equality (tmp/render s1) (tmp/render s2)))))))
+      (is (= (enlive-html-equality (tmp/render s1) (tmp/render s2)))))))
 
 (deftest test-html-body
   (testing "Should extract the body content from an html file"
@@ -150,7 +150,7 @@
                                          </body>
                                        </html>"]
       (is (html-string-equality (tmp/load-html h)
-             "<html>
+                                "<html>
                  <body>
                    <div>The div content</div>
                  </body>
@@ -162,9 +162,9 @@
                                      </body>
                                   </html>" relative-path-to-template-loc)
           child-content "<div>I am from the child</div>"]
-        (with-html-files [parent "parent.html" parent-content child "child.html" child-content ]
-          (is (html-string-equality (tmp/load-html parent)
-                 "<html>
+      (with-html-files [parent "parent.html" parent-content child "child.html" child-content ]
+        (is (html-string-equality (tmp/load-html parent)
+                                  "<html>
                      <body>
                        <div>I am from the child</div>
                       </body>
@@ -181,9 +181,9 @@
                                       <div id='content'>I am child content</div>
                                   </within>"
                                 relative-path-to-template-loc)]
-        (with-html-files [parent "parent.html" parent-content child "child.html" child-content ]
-          (is (html-string-equality (tmp/load-html child)
-                                    "<html>
+      (with-html-files [parent "parent.html" parent-content child "child.html" child-content ]
+        (is (html-string-equality (tmp/load-html child)
+                                  "<html>
                                          <body>
                                             <div id=\"content\">I am child content</div>
                                          </body>
@@ -202,13 +202,13 @@
           child-within-content (format "<_within file='%s/parent.html'>
                                            <div id='content'>I am child content 1</div>
                                         </within>"
-                                relative-path-to-template-loc)
+                                       relative-path-to-template-loc)
           child-inner-content "<div>child 2 content</div>"]
-        (with-html-files [parent "parent.html" parent-content
-                          child-within "child.html" child-within-content
-                          child-include "child2.html" child-inner-content]
-          (is (html-string-equality (tmp/load-html child-within)
-                 "<html>
+      (with-html-files [parent "parent.html" parent-content
+                        child-within "child.html" child-within-content
+                        child-include "child2.html" child-inner-content]
+        (is (html-string-equality (tmp/load-html child-within)
+                                  "<html>
                        <body>
                            <div>child 2 content</div>
                            <div id=\"content\">I am child content 1</div>
@@ -218,24 +218,24 @@
   (testing
       "Load a child file that has a within tag, and an include tag.  It will be loaded into the parent template, but it will
        also load the included child content"
-      (let [parent-content (format "<html>
+    (let [parent-content (format "<html>
                                        <body>
                                          <div id='content'></div>
                                        </body>
                                     </html>"
-                                   relative-path-to-template-loc relative-path-to-template-loc)
-            child-within-content (format "<_within file='%s/parent.html'>
+                                 relative-path-to-template-loc relative-path-to-template-loc)
+          child-within-content (format "<_within file='%s/parent.html'>
                                              <div id='content'>
                                                  I am child content 1
                                                  <_include file='%s/child2.html' />
                                               </div>
                                            </within>" relative-path-to-template-loc relative-path-to-template-loc)
-            child-inner-content "<div>child 2 content</div>"]
-        (with-html-files [parent "parent.html" parent-content
-                          child-within "child.html" child-within-content
-                          child-include "child2.html" child-inner-content]
-          (is (html-string-equality (tmp/load-html child-within)
-                 "<html>
+          child-inner-content "<div>child 2 content</div>"]
+      (with-html-files [parent "parent.html" parent-content
+                        child-within "child.html" child-within-content
+                        child-include "child2.html" child-inner-content]
+        (is (html-string-equality (tmp/load-html child-within)
+                                  "<html>
                        <body>
                            <div id=\"content\">
                              I am child content 1
@@ -249,23 +249,23 @@
 (deftest test-tnodes
   (testing
       "Test that tnodes can find the matching template tags with the given template attribute name"
-      (with-html-files [x "x.html" "<div><div template='t1'></div></div>"]      
-        (is (= (tmp/tnodes x "t1")
-               '({:tag :div, :attrs {:template "t1"}, :content nil}))))))
+    (with-html-files [x "x.html" "<div><div template='t1'></div></div>"]      
+      (is (= (tmp/tnodes x "t1")
+             '({:tag :div, :attrs {:template "t1"}, :content nil}))))))
 
 (deftest test-template-children
   (testing
       "Make sure that all the children of the template content are being found"
-      (with-html-files [x "x.html" "<div><div template='t1'><div id='child'><ul><li>Bullet Point</li></ul></div></div></div>"]
-        (is (= (tmp/template-children x "t1")
-               '({:tag :div, :attrs {:id "child"},
-                  :content ({:tag :ul, :attrs nil,
-                             :content ({:tag :li, :attrs nil,
-                                        :content ("Bullet Point")})})})))))
+    (with-html-files [x "x.html" "<div><div template='t1'><div id='child'><ul><li>Bullet Point</li></ul></div></div></div>"]
+      (is (= (tmp/template-children x "t1")
+             '({:tag :div, :attrs {:id "child"},
+                :content ({:tag :ul, :attrs nil,
+                           :content ({:tag :li, :attrs nil,
+                                      :content ("Bullet Point")})})})))))
 
   (testing
       "Load multiple children of the same template name"
-      (with-html-files [x "x.html" "<div>
+    (with-html-files [x "x.html" "<div>
                                        <div template='t1'>
                                             <div id='child1'>child 1 content</div>
                                        </div>
@@ -273,9 +273,9 @@
                                             <div id='child2'>child 2 content</div>
                                        </div>
                                       </div>"]
-        (is (= (tmp/template-children x "t1")
-               '({:tag :div, :attrs {:id "child1"},:content ("child 1 content")}
-                 {:tag :div, :attrs {:id "child2"}, :content ("child 2 content")}))))))
+      (is (= (tmp/template-children x "t1")
+             '({:tag :div, :attrs {:id "child1"},:content ("child 1 content")}
+               {:tag :div, :attrs {:id "child2"}, :content ("child 2 content")}))))))
 
 
 
@@ -289,8 +289,9 @@
     (is (= (@#'tmp/field-pairs "id:id-5,content:name")
            '(("id" "id-5") ("content" "name"))))))
 
-(deftest test-extract-field-attrs
-  (testing "Make sure that all the nodes containing template fields can be selected, and their attributes retrieved"
+(deftest test-extract-field-pairs
+  (testing "Make sure that all the nodes containing template field pairs can be selected, and all these 
+            pairs extracted"
     (let [nodes (tmp/html-parse "<div field='id:id-5'>
                                    <div field='content:name'></div>
                                   </div>")]     
@@ -298,7 +299,7 @@
              '("id:id-5" "content:name"))))))
 
 (deftest test-field-to-symbol-mapping
-  (testing "Make sure that all fields can be mapped to a unique symbol"
+  (testing "Make sure that all fields are mapped to a unique symbol"
     (let [nodes (tmp/html-parse "<div field='id:id-5'>
                                    <div field='content:name'></div>
                                   </div>")
@@ -309,7 +310,7 @@
         (is (= 2 (count (vals (@#'tmp/field-to-symbol-mapping field-names)))))))
     )
 
-  (testing "Fields that are the same should map to the same symbol"
+  (testing "Fields that specify the same field identifier, should map to the same symbol"
     (let [nodes (tmp/html-parse "<div field='id:id-5'>
                                    <div field='content:name'></div>
                                  </div>
@@ -351,19 +352,46 @@
             :id-5 {:field "id:id-5" :type :attr, :attr-name "id"}}))))
 
 (deftest test-create-template-map
+  "Given a sequence of field pairs, and a map containing a mapping of a field pair to a symbol name,
+   should create a map that maps the field identifiers from the field pairs to a field template map.
+   The field template map has four attributes, :field, :id, :attr-name and :type.
+   :field is the raw field pair string
+   :id is the symbol that the field pair mapped to in ts-syms
+   :attr-name is the name of the field type identifier
+   :type is either :attr, or :content"
   (let [ts ["id:id-5" "content:name"]
         ts-syms {"id:id-5" 'G_3001, "content:name" 'G_3002}]
     (is (= (@#'tmp/create-template-map ts ts-syms)
            {:id-5 {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr}
             :name {:field "content:name" :id 'G_3002 :attr-name "content" :type :content}}
-           )))
-  )
+           ))))
+
+(deftest test-remove-static-fields
+  (testing
+      (let [removed (@#'tmp/remove-static-fields #{:id-5}
+                                           '{:id-5 {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr}
+                                             :name {:field "content:name" :id 'G_3002 :attr-name "content" :type :content}})]
+        (testing "There should only be 1 item in the map now, since the value with :id-5 is now gone"
+            (is (= (count removed)
+                   1)))
+        (testing "Only :name should remain as a key"
+          (is (contains? removed :name))
+          (is (not (contains? removed :id-5))))))
+  (testing "A key that is not in the map will not effect the resulting map"
+    (is (= (count (@#'tmp/remove-static-fields #{:id-6}
+                                           '{:id-5 {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr}
+                                             :name {:field "content:name" :id 'G_3002 :attr-name "content" :type :content}}))
+           2))))
 
 (deftest test-make-dynamic-template
-  (is (= (@#'tmp/make-dynamic-template '({:tag :div :attrs {:field "id:id-5"}})
-                                     :id-5
-                                     {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr})
-         '({:content (), :tag :div, :attrs {:field "id:id-5,id:G_3001"}}))))
+  (testing
+      "The sequence of enlive nodes contains fields that reference a field pair.  Using the
+       key :id-5, which is a field identifier, insert the string id:G3001 into the
+       the attribute of the node that has the field id:id-5"
+   (is (= (@#'tmp/make-dynamic-template '({:tag :div :attrs {:field "id:id-5"}})
+                                        :id-5
+                                        {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr})
+          '({:content (), :tag :div, :attrs {:field "id:id-5,id:G_3001"}})))))
 
 
 (deftest test-insert-template-symbols-into-nodes
@@ -372,17 +400,176 @@
           ts-syms {"id:id-5" 'G_3001, "content:name" 'G_3002}
           t-map (@#'tmp/create-template-map ts ts-syms)
           nodes (tmp/tnodes x "t1")]
-      (is (= (@#'tmp/insert-template-symbols-into-nodes nodes t-map)
+      (is (= (@#'tmp/insert-template-symbols-into-nodes t-map nodes)
              '({:tag :div, :attrs {:template "t1"},
                 :content ({:tag :div, :attrs {:field "id:id-5,id:G_3001"}, :content ()} 
                           {:tag :div, :attrs {:field "content:name,id:G_3002"}, :content ()})}))))))
 
-(with-html-files [x "x.html" "<div template=\"t1\"><div field=\"id:id-5\"></div><div field=\"content:name\"></div></div>"]
-  (let [mk-tmp (tmp/dtfn (tmp/tnodes x "t1") #{:id-5})
-        mk-tmp (eval mk-tmp)
-        [template html] (mk-tmp)]
-    (println "Here is the temlate: ")
-    (println template)
-    (println (html {:name "adfsfsfsfsdf" :id-5 "asdfasfsd"}))
+(deftest test-removed-unneeded-template-fields
+  (testing
+      "When given a sequence of template nodes and a template map, need to remove all field attributes from 
+       the template map values"
+    (is (= (@#'tmp/remove-unneeded-template-fields
+          {:id-5 {:field "id:id-5" :id 'G_3001 :attr-name "id" :type :attr}
+           :name {:field "content:name" :id 'G_3002 :attr-name "content" :type :content}})
+          '{:id-5 {:attr-name "id", :type :attr, :id G_3001}, :name {:type :content, :id G_3002}}))))
+
+(deftest test-template-output
+  (testing
+      "When this list statement is evaluated, it will create a let expression.  In the bindings
+       is the usual vector binding, which maps ids to new symbols.  The let statement, and therefore,
+       the symbols will not be evaluated right away.  It will just be the raw list form that is created
+       the first type this expression is read"
+    (let [ids ['G_33 'G_44]]
+      (is (= (list 'let (vec (interleave ids (repeat (list 'gensym)))))
+             '(let [G_33 (gensym) G_44 (gensym)]))))
+    (let [t-map {:name {:id 'G_77 :type :content}}
+          ids ['G_77]
+          x (list 'let (vec (interleave ids (repeat (list 'gensym))))
+                  [t-map])]
+      (testing "Since the inside of the let expression has not been evaluated, the symbol referred
+                  to by the t-map will still be G_77"
+        (is (= x
+               '(let [G_77 (gensym)] [{:name {:type :content, :id G_77}}]))))
+
+      (testing "However, when evaluated, it will have a new symbol, because G_77
+                  now points to a different symbol, generated when gensym was evaluated
+                  in the let statement"
+        (let [[new-t-map] (eval x)]
+          (is (not= new-t-map t-map))
+          (is (not= (get-in new-t-map [:name :id]) (get-in t-map [:name :id])))
+          (is (symbol? (get-in new-t-map [:name :id]))))))))
+
+
+(deftest test-field-map
+  (testing " Set up the nodes that have field attrs and content in them"
+   (let [nodes '({:tag :div, :attrs {:template "t1"},
+                  :content ({:tag :div, :attrs {:field "id:id-5"},
+                             :content ()} {:tag :div, :attrs {:field "content:name,id:G__85186"},
+                             :content ()})})
+         ts (@#'tmp/extract-field-pairs nodes)]
+     (testing "Make sure that the field pairs are extracted, there should be two of them"
+       (is (= (count ts) 2))
+       (is (= '("id:id-5" "content:name,id:G__85186")
+              ts)))    
+     (testing "The field map should extract all the separate field pairs from the sequence
+              In this case, there are actually 3 field pairs, because content:name,id:G__85186
+              is actually 2 field pairs.  There is also id:id-5"
+       (let [field-map (@#'tmp/field-map ts)]
+         (is (= (count field-map) 3) )
+         (is (= field-map
+                {"G__85186" "id" "name" "content" "id-5" "id"}
+                )))))))
+
+(deftest test-field-map-to-index
+  (testing ""
+   (let [map-sym 'G_10001
+         field-map {"G__85186" "id" "name" "content" "id-5" "id"}]
+     (is (= (@#'tmp/field-map-to-index map-sym field-map)
+            '{"~{name}" (get G_10001 :name)
+              "~{G__85186}" (get G_10001 :G__85186)
+              "~{id-5}" (get G_10001 :id-5)})))))
+
+
+(deftest test-make-template
+  (testing "A field that specifies an attribute value, such as an id, should have its node sequence
+            altered so that the field identifier in the field pair shows up in the attrs part of
+            the node"
+    (is (= (@#'tmp/make-template '({:tag :div, :attrs {:template "t1"},
+                                    :content ({:tag :div, :attrs {:field "id:id-5"}, :content ()})})
+                                 "id:id-5"
+                                 )
+           ;;  id-5 now appears in the div attrs, and it's an id attribute
+           '({:tag :div, :attrs {:template "t1"},
+              :content ({:tag :div, :attrs {:id "~{id-5}", :field "id:id-5"}, :content ()})})
+           )))  
+  (testing "Content should show up in the content section of the nodes when specified by a field"
+    (is (= (@#'tmp/make-template '({:tag :div, :attrs {:template "t1"},
+                                    :content ({:tag :div, :attrs {:field "content:name"}, :content ("~{name}")})})
+                                 "content:name"
+                                 )
+           '({:tag :div, :attrs {:template "t1"},
+              :content ({:tag :div, :attrs {:field "content:name"},:content ("~{name}")})})
+           )))
+  (testing "Multiple field pairs in the same field attribute should be expanded in the nodes
+            if they exist.  Here there is both an attribute, and a content field pair."
+    (is (= (@#'tmp/make-template '({:tag :div, :attrs {:template "t1"},
+                                    :content ({:tag :div, :attrs {:field "content:name,id:G__85186"},
+                                               :content ()})})
+                                 "content:name,id:G__85186"
+                                 )
+           '({:tag :div, :attrs {:template "t1"},
+              :content ({:tag :div, :attrs {:id "~{G__85186}", :field "content:name,id:G__85186"},
+                         :content ("~{name}")})})))))
+
+
+
+(deftest test-prepare-node-template
+  (testing "Make sure that all nodes that specify a field pair, and that are in the ts sequence
+            are prepared for template value insertion   This is done by having their content/attribute section
+            appended with a field identifier wrapped in ~{}."    
+    (is (= (@#'tmp/prepare-node-template '({:tag :div, :attrs {:template "t1"},
+                                            :content ({:tag :div, :attrs {:field "id:id-5"}, :content ()}
+                                                      {:tag :div, :attrs {:field "content:name,id:G__85186"},
+                                                       :content ()})})
+                                         '("id:id-5" "content:name,id:G__85186"))
+
+           '({:tag :div, :attrs {:template "t1"},
+              :content ({:tag :div, :attrs {:id "~{id-5}", :field "id:id-5"}, :content ()}
+                        {:tag :div, :attrs {:id "~{G__85186}", :field "content:name,id:G__85186"}, :content ("~{name}")})})
+           ))
+
     )
   )
+
+(deftest test-combine-field-map-index-with-nodes
+  (testing
+      "Given some nodes and a field map index, need to combine them so that the field and template
+       attributes are removed, and what they specify for their values are inserted into the nodes
+       In this case, the :id and content areas have template identifiers wrapped in ~{} expressions.
+       These will be replaced by a get expression value in the field map index.
+"
+    (let [nodes '({:tag :div, :attrs {:template "t1"},
+                   :content ({:tag :div, :attrs {:id "~{id-5}", :field "id:id-5"}, :content ()}
+                             {:tag :div, :attrs {:id "~{G__85186}", :field "content:name,id:G__85186"}, :content ("~{name}")})})
+          field-map-index {"~{name}" '(get G_10001 :name)
+                           "~{G__85186}" '(get G_10001 :G__85186)
+                           "~{id-5}" '(get G_10001 :id-5)}]        
+      (is (=  (@#'tmp/combine-field-map-index-with-nodes field-map-index nodes)
+              '("<div><div id=\"" (get G_10001 :id-5) "\"></div><div id=\"" (get G_10001 :G__85186) "\">" (get G_10001 :name) "</div></div>"))))))
+
+
+(deftest convert-nodes-to-template-seq
+  
+  )
+
+(deftest test-tfn
+  (testing
+      "Make sure that it's outputing the proper function that accepts a "
+    )
+  )
+
+(deftest test-dtfn
+  (with-html-files [x "x.html" "<div template=\"t1\"><div field=\"id:id-5\"></div><div field=\"content:name\"></div></div>"]
+    (let [mk-tmp (tmp/dtfn (tmp/tnodes x "t1") #{:id-5})
+         ; _ (println "The raw map")
+          ;_ (println mk-tmp)
+          mk-tmp (eval mk-tmp)
+          [template html] (mk-tmp)]
+      ;(println "Here is the temlate1: ")
+      ;(println template)
+      ;(println "The html")
+      
+      (testing "The id that was specified to belong to id-5 should now contain the id id5"
+       (is (-> (enlive/select (tmp/html-parse (html {:id-5 "id5"}))
+                              [:#id5])
+               first
+               :attrs
+               :id              
+               )
+           "id5"))      
+      (testing "There should be one element with the content 'The new content'"
+        (is (= 1
+             (count (enlive/select (tmp/html-parse (html {:name "The new content"}))
+                                   [(enlive/text-pred #(re-matches #"The new content" %))]))))))))
+

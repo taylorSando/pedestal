@@ -171,6 +171,11 @@
           {}
           (mapcat field-pairs coll)))
 
+(defn- extract-field-pairs [nodes]
+  "Gets all the field pairs in the nodes"
+  (let [field-nodes (select nodes [(attr? :field)])]
+    (map (fn [x] (-> x :attrs :field)) field-nodes)))
+
 (defn make-template [nodes field-value]
   (reduce (fn [a [k v]]
             (transform a [[(attr= :field field-value)]]
@@ -179,6 +184,20 @@
                          (set-attr (keyword k) (str "~{" v "}")))))
           nodes
           (field-pairs field-value)))
+
+(defn prepare-node-template [nodes ts]
+  "Go through each of the field pairs in the ts sequence and prepare the nodes
+   template value insertion.  The nodes are assumed to have field attributes that
+   specify field pairs.  Any field pair in the ts sequence will be used to transform
+   the nodes for template insertion.  Nodes that have content field types, will
+   have the field identifier wrapped in a ~{} expression and inserted into the content
+   of the element.  Any other field pair will have the field identifier inserted into the attrs section,
+   with the same ~{} wrapping.  These wrappings identify the areas that the template values will be replacing   
+   later"
+  (reduce (fn [a field-value]
+            (make-template a field-value))
+          nodes
+          ts))
 
 (defn simplify-tseq
   "Concats strings together in templates to optimize them slightly"
@@ -189,54 +208,81 @@
       %)
    (partition-by string? s)))
 
-(defn tfn [nodes]
-  ;; 
-  (let [map-sym (gensym)
-        ;;field-nodes (-> nodes (select [(attr? :field)]))
-        ;;ts (map (fn [x] (-> x :attrs :field)) field-nodes)
-        ts (extract-field-pairs nodes)
-        field-map (field-map ts)
-        _ (println "Field Map")
-        _ (println field-map)
-        index (reduce (fn [a k]
-                        (assoc a (str "~{" k "}") (list 'get map-sym (keyword k))))
-                      {}
-                      (keys field-map))
-        _ (println "Index")
-        _ (println index)
-        nodes (reduce (fn [a field-value]
-                        (make-template a field-value))
-                      nodes
-                      ts)
-        _ (println "New Nodes")
-        _ (println nodes)
-        nodes (-> nodes
+(defn- field-map-to-index [map-sym field-map]
+  "Need to create a way to help map template values into the final template string.
+   One way to do this is to insert values using a map."
+  (reduce (fn [a k]
+            (assoc a (str "~{" k "}") (list 'get map-sym (keyword k))))
+          {}
+          (keys field-map))
+  )
+
+(defn- insert-field-map-index-into-seq [index seq]
+  "Anywhere there is a reference to ~{field identifier} in the sequence, this is replaced using
+   the field map index.  The key is the ~{field identifier} expression from sequence,
+   and the value is what that key has in the field map index."
+  (reduce (fn [a b]
+            (conj a (if (contains? index b)
+                      (get index b)
+                      b)))
+          []
+          seq))
+
+
+(defn- combine-field-map-index-with-nodes [index nodes]
+  "The combination means that anywhere there was a reference to a field identifier
+   in the nodes, this will be replaced by a get call to the template map supplier.
+   For example, a content element with a field identifier ~{name} would be replaced by:
+   (get G_xxxxx :name)
+   The G_xxxxx symbol represents a call to a map that will be provided later"
+  ;; Remove any field or template attribute from the nodes, they are no longer
+  ;; required, and don't need to be rendered in the final html output
+  (let [nodes (-> nodes
                   (transform [(attr? :field)] (remove-attr :field))
                   (transform [(attr? :template)] (remove-attr :template)))
-        _ (println "New Nodes 2")
-        _ (println nodes)
+        ;; Emit the nodes so that they are a sequence of enlive special characters        
         seq (emit* nodes)
-        _ (println "First Seq")
-        _ (println seq)
+        ;; Whenever a space and newline are together, removed them
         seq (remove #(= (set %) #{\space \newline}) seq)
-        _ (println "SEcond seq")
-        _ (println seq)
-        seq (reduce (fn [a b]
-                      (conj a (if (contains? index b)
-                                (get index b)
-                                b)))
-                    []
-                    seq)
-        _ (println "Third seq")
-        _ (println seq)
-        seq (simplify-tseq seq)]
-    (println "Fourth Seq")
-    (println seq)
-    (println "Raw")
-    (println (cons 'str seq))
-    (println "Fn")
-    (println (list 'fn [map-sym]
-          (cons 'str seq)))
+        ;; Where there was previously a call to ~{template-identifier} in
+        ;; the sequence, it will be replaced by the value
+        ;; that the ~{template-identifier} has as a key in
+        ;; the field-map index
+        seq (insert-field-map-index-into-seq index seq)]
+    (simplify-tseq seq)))
+
+(defn- convert-nodes-to-template-seq [nodes map-sym]
+  (let [ts (extract-field-pairs nodes)
+        ;; Extract all the separate field pairs,
+        ;; Map the identifier to the type
+        field-map (field-map ts)
+        ;; Create a new map, whereby the field identifiers from the field-maps
+        ;; above are transformed into a map where the key/value looks like:
+        ;; "~{id-5}" (get G_10001 :id-5)
+        ;; The key is the field identifier wrapped in ~{}, and the value
+        ;; is a get expression on the symbol that is map-sym
+        ;; This will be used to prepare the nodes below
+        index (field-map-to-index map-sym field-map) 
+        ;; Prepare the nodes to be used with the field-map-index generated above
+        nodes (prepare-node-template nodes ts)]
+    ;; Combine the index and nodes to create a string sequence
+    ;; that can be used below
+    (combine-field-map-index-with-nodes index nodes )))
+
+(defn tfn [nodes]
+  "Takes the nodes and generates a function that outputs a string of html based on the template
+   values"
+  ;; 
+  (let [map-sym (gensym)
+        seq (convert-nodes-to-template-seq nodes map-sym)]
+    ;(println "Fourth Seq")
+    ;(println seq)
+    ;(println "Raw")
+    ;(println (cons 'str seq))
+    ;(println "Fn")
+   
+    #_(println (list 'fn [map-sym]
+                   (cons 'str seq)))
     (list 'fn [map-sym]
           (cons 'str seq))))
 
@@ -267,17 +313,12 @@
         all-field-pairs))
 
 (defn make-dynamic-template [nodes key info]
-  ;; Gives a sequence of enlive nodes, a template key, and template value (info)
-  ;; Insert the template information into nodes that have a field attribute matching the template
-  ;; field pair key
-  ;; e.g. nodes is ({:tag :div, :attrs {:field id:id-5})
-  ;; key is :id-5
-  ;; info is {:id G_30001 :field id:id-5, :type :attr, :attr-name id}
+  "When given a sequence of nodes, a template key, and a template map
+  Insert the template information into nodes that have a field attribute matching the template "
   (reduce (fn [a [k v]]
             ;; Transform any node that has a field attribute matching
             ;; the template info :field value, by adding the field pair string
             ;; followed by an id identifying the symbol
-            ;; In this example, it would add :id:id-5,G_30001
             (transform a [[(attr= :field (:field info))]]
                        (set-attr :field (str (:field info) "," "id:" (:id info)))))
           nodes
@@ -285,10 +326,7 @@
           ;; the info map
           (field-pairs (:field info))))
 
-(defn- extract-field-pairs [nodes]
-  "Gets all the field pairs in the nodes"
-  (let [field-nodes (select nodes [(attr? :field)])]
-    (map (fn [x] (-> x :attrs :field)) field-nodes)))
+
 
 (defn- field-to-symbol-mapping [fields]
   "When given a sequence of template fields, returns a map containing the fields string as a key
@@ -305,7 +343,7 @@
   "When given a sequence of template field pairs, and a map of their symbols, create a template map that will
    map the template identifier to a map containing the various template properties, including its symbol
    e.g.
-   (create-template-map '(\"id:id-5\" \"content:name\") {\"id:id-5\" G_3001, \"content:name\" G_3002})
+   (create-template-map '(id:id-5 content:name) {id:id-5 G_3001, content:name G_3002})
    would become:
    {:id-5 {:field id:id-5 :id G_3001 :attr-name id :type :attr}
     :name {:field content:name :id G_3002 :attr-name content :type :content}} "
@@ -314,9 +352,9 @@
           {}          
           (convert-field-pairs-to-map ts)))
 
-(defn- insert-template-symbols-into-nodes [nodes t-map]
-  "Go through the template map, extract the symbol ids and insert them into their corresponding locations in the
-   nodes."
+(defn- insert-template-symbols-into-nodes [t-map nodes]
+  "Go through the nodes, find nodes with field pair attributes.  Append the field attribute to include the field symbol
+   from the template map where the field identifier in the node matches a key in the template map nodes."
   (reduce (fn [a [k info]]
             (make-dynamic-template a key info))
           nodes
@@ -337,38 +375,66 @@
   (map :id (vals t-map)))
 
 
-(defn- dtfn1 [map-sym ids changes nodes]
-  (list 'fn [] (list 'let (vec (interleave ids (repeat (list 'gensym))))
-                     [changes (list 'fn [map-sym]
-                                    (list (tfn nodes)
-                                          (concat ['assoc map-sym]
-                                                  (interleave (map keyword ids)
-                                                              ids))))])))
-
-(defn dtfn [nodes static-fields]
+(defn- template-output [t-map nodes]
   (let [map-sym (gensym)
-        ;; Get all the template field pairs as a sequence of strings
+        ids (select-template-symbol-ids t-map)]    
+    ;; The first function returns a vector of two elements
+    ;; The first is the template map
+    ;; The second is an html function emitter function
+    ;; The first part is building a function
+    ;; Inside the function, a let statement is being built
+    ;; The local bindings are made up of the template symbol ids
+    ;; These symbol ids are being mapped to their own unique symbols
+   (list 'fn [] (list 'let (vec (interleave ids (repeat (list 'gensym))))
+                      ;; This function will return a vector
+                      ;; The first element, is the template map
+                      ;; The secodn element is another function that takes a map
+                      ;; as an argument.
+                      ;; The map-sym is a gensym that will become the map argument
+                      ;; that is past into this function
+                      ;; Internally, it creates a template function that is responsible
+                      ;; for creating the html string output
+                      ;; This is wrapped in a list call, because it's creating a function
+                      ;; that will be called immediately.
+                      ;; Therefore, what's returned from (tfn nodes) is an html string output function
+                      ;; and its argument is the map that is created by the assoc statement
+                      ;; below it
+                      ;; When the symbols get evaluated, they get evaluated to new symbol values
+                      
+                      [t-map (list 'fn [map-sym]
+                                     (list (tfn nodes)
+                                           ;; concat creates a list out of its elements
+                                           ;; This creates an assoc with map-sym, which
+                                           ;; is the map that is passed into the function above
+                                           ;; It uses the template symbol ids, makes them into
+                                           ;; keywords, and then adds them to the map
+                                           (concat ['assoc map-sym]
+                                                   (interleave (map keyword ids)
+                                                               ids))))]))))
+
+(defn- remove-static-fields [static-fields t-map]
+  "If any of the template map keys match one of the static fields, it is removed from the map"
+  (reduce (fn [a [k v]]
+            (if (contains? static-fields k)
+              a
+              (assoc a k v)))
+          {}
+          t-map))
+
+(defn dtfn [nodes static-fields]  
+  (let [;; Get all the template field pairs as a sequence of strings
         ts (extract-field-pairs nodes)
         ;; Map all the template field pairs to unique symbols
         ts-syms (field-to-symbol-mapping ts)
         ;; Map the template pair identifiers to template properties
-        t-map (create-template-map ts ts-syms)
-        ;; Not really sure what this is doing
-        ;; It's looking for keys in t-map that match the sequence that is static-fields
-        ;; It doesn't seems to change anything whether it matches or not
-        changes (reduce (fn [a [k v]]
-                          (if (contains? static-fields k)
-                            a
-                            (assoc a k v)))
-                        {}
-                        t-map)        
-        nodes (insert-template-symbols-into-nodes nodes changes)
-        changes (remove-unneeded-template-fields changes)
-        ;; Go through all the template maps and extract the symbol ids
-        ids (select-template-symbol-ids changes)]
-    (println "Final Template Map")
-    (println changes)
-    (dtfn1 map-sym ids changes nodes)))
+        t-map (create-template-map ts ts-syms)                
+        ;; Any keys that match a static field are removed from the template map
+        t-map (remove-static-fields static-fields t-map)
+        ;; Insert the symbols generated in the template map into the nodes
+        ;; with a matching field identifier
+        nodes (insert-template-symbols-into-nodes t-map nodes)                
+        changes (remove-unneeded-template-fields t-map)]
+    (template-output t-map nodes)))
 
 (defn tnodes
   ([file name]
