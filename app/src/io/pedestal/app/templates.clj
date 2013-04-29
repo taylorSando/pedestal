@@ -210,7 +210,9 @@
 
 (defn- field-map-to-index [map-sym field-map]
   "Need to create a way to help map template values into the final template string.
-   One way to do this is to insert values using a map."
+   One way to do this is to insert values using a map.  The keys from the field map,
+   which are the field identifiers, are wrapped ~{f-id}.  The value inserted 
+   is a get expression, (get map-sym :k)"
   (reduce (fn [a k]
             (assoc a (str "~{" k "}") (list 'get map-sym (keyword k))))
           {}
@@ -269,22 +271,15 @@
     ;; that can be used below
     (combine-field-map-index-with-nodes index nodes )))
 
-(defn tfn [nodes]
-  "Takes the nodes and generates a function that outputs a string of html based on the template
-   values"
-  ;; 
-  (let [map-sym (gensym)
-        seq (convert-nodes-to-template-seq nodes map-sym)]
-    ;(println "Fourth Seq")
-    ;(println seq)
-    ;(println "Raw")
-    ;(println (cons 'str seq))
-    ;(println "Fn")
-   
-    #_(println (list 'fn [map-sym]
-                   (cons 'str seq)))
-    (list 'fn [map-sym]
-          (cons 'str seq))))
+(defn tfn 
+  "Takes the nodes, generates a function that outputs a string of html that can eventually be combined
+   with a map to populate the content.  You can specify the map symbol, or you can have it automatically
+   generated, depending if you pass in the second parameter"
+  ([nodes] (tfn nodes (gensym)))
+  ([nodes map-sym]
+     (let [seq (convert-nodes-to-template-seq nodes map-sym)]                     
+       (list 'fn [map-sym]
+             (cons 'str seq)))))
 
 (defn- convert-field-pair-to-map [fp]
   "Converts the raw field pair string (type:identifier) into a map that contains the field pair identifier
@@ -304,7 +299,7 @@
 (defn- convert-field-pairs-to-map [all-field-pairs]
   "Converts a sequence of field pairs to a map.  The map has keys that are the field pair identifiers and the
    values are properties corresponding to the type of the field pair
-   e.g. (\"id:id-5\" \"content:name\"
+   e.g. (id:id-5 content:name
    {:id-5 {:field id:id-5, :type :attr, :attr-name id}
     :name {:field content:name :type :content :attr-name content}}"
   (reduce (fn [a fp]
@@ -325,7 +320,6 @@
           ;; Extract the field pairs from the raw string field pair that is held within
           ;; the info map
           (field-pairs (:field info))))
-
 
 
 (defn- field-to-symbol-mapping [fields]
@@ -375,9 +369,8 @@
   (map :id (vals t-map)))
 
 
-(defn- template-output [t-map nodes]
-  (let [map-sym (gensym)
-        ids (select-template-symbol-ids t-map)]    
+(defn- template-output [t-map nodes outer-map-sym inner-map-sym]
+  (let [ids (select-template-symbol-ids t-map)]    
     ;; The first function returns a vector of two elements
     ;; The first is the template map
     ;; The second is an html function emitter function
@@ -399,16 +392,15 @@
                       ;; Therefore, what's returned from (tfn nodes) is an html string output function
                       ;; and its argument is the map that is created by the assoc statement
                       ;; below it
-                      ;; When the symbols get evaluated, they get evaluated to new symbol values
-                      
-                      [t-map (list 'fn [map-sym]
-                                     (list (tfn nodes)
+                      ;; When the symbols get evaluated, they get evaluated to new symbol values                      
+                      [t-map (list 'fn [outer-map-sym]
+                                     (list (tfn nodes inner-map-sym)
                                            ;; concat creates a list out of its elements
                                            ;; This creates an assoc with map-sym, which
                                            ;; is the map that is passed into the function above
                                            ;; It uses the template symbol ids, makes them into
                                            ;; keywords, and then adds them to the map
-                                           (concat ['assoc map-sym]
+                                           (concat ['assoc outer-map-sym]
                                                    (interleave (map keyword ids)
                                                                ids))))]))))
 
@@ -421,9 +413,9 @@
           {}
           t-map))
 
-(defn dtfn [nodes static-fields]  
-  (let [;; Get all the template field pairs as a sequence of strings
-        ts (extract-field-pairs nodes)
+(defn- dtfn* [nodes static-fields outer-map-sym inner-map-sym]
+  ;; Get all the template field pairs as a sequence of strings
+  (let [ts (extract-field-pairs nodes)
         ;; Map all the template field pairs to unique symbols
         ts-syms (field-to-symbol-mapping ts)
         ;; Map the template pair identifiers to template properties
@@ -434,7 +426,10 @@
         ;; with a matching field identifier
         nodes (insert-template-symbols-into-nodes t-map nodes)                
         changes (remove-unneeded-template-fields t-map)]
-    (template-output t-map nodes)))
+    (template-output t-map nodes outer-map-sym inner-map-sym)))
+
+(defn dtfn [nodes static-fields]
+  (dtfn* nodes static-fields (gensym) (gensym)))
 
 (defn tnodes
   ([file name]
@@ -448,8 +443,5 @@
              empty)))
 
 (defn template-children [file name]
+  "When given an html file and a template name.  Return all the template's children."
   (select (html-resource file) [(attr= :template name) :> :*]))
-
-
-
-
