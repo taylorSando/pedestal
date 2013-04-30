@@ -67,7 +67,7 @@
           ks))
 
 (defn- sort-keys [ks]
-  "This will sort the given keys, making sure to eliminate any duplicate :**,and making sur ethat :* and :**
+  "This will sort the given keys, making sure to eliminate any duplicate :**,and making sure that :* and :**
    end up at the end of the list"
   ;; Remove any key that matches :**, need to eliminate possible duplicates
   ;; sorted-keys is now a sequence
@@ -107,16 +107,14 @@
           (select-matches (:children handlers) (first path)))))
 
 (defn find-handler [handlers op path]
-  "Given a set of handlers, an operation and a path, find the handler that satisfies
-   the operation and path"
+  "Given a set of handlers, an operation, and a path, find the handler that satisfies
+   the operation and path.     
+   For example, it will prefer to match :node-create [:a :b] over :node-create [:a :**]
+   :* is a wild card, but only matches a single path element
+   :** is a wild card, but can math more than one path element
+   For example, [:a :b :*] would match [:a :b :c], but not [:a :b :c :d]
+   [:a :b :**] would match [:a :b :c], [:a :b :c :d], and [:a :b :c :d :e]"
   (find-handler* {:children handlers} (vec (cons op path))))
-
-;; find-handler will attempt to find the most specific handler for the given op and path
-;; For example, it will prefer to match :node-create [:a :b] over :node-create [:a :**]
-;; :* is a wild card, but only matches a single path element
-;; :** is a wild card, but can math more than one path element
-;; For example, [:a :b :*] would match [:a :b :c], but not [:a :b :c :d]
-;; [:a :b :**] would match [:a :b :c], [:a :b :c :d], and [:a :b :c :d :e]
 
 ;; Rendering
 ;; ================================================================================

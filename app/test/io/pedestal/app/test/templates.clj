@@ -168,7 +168,7 @@
                      <body>
                        <div>I am from the child</div>
                       </body>
-                   </html>")))))  
+                   </html>"))))) 
   (testing
       "Should be able to load a child file that has a within tag, referencing the parent.  The child will be expanded
        into the parent's content"
@@ -516,11 +516,7 @@
 
            '({:tag :div, :attrs {:template "t1"},
               :content ({:tag :div, :attrs {:id "~{id-5}", :field "id:id-5"}, :content ()}
-                        {:tag :div, :attrs {:id "~{G__85186}", :field "content:name,id:G__85186"}, :content ("~{name}")})})
-           ))
-
-    )
-  )
+                        {:tag :div, :attrs {:id "~{G__85186}", :field "content:name,id:G__85186"}, :content ("~{name}")})})))))
 
 (deftest test-combine-field-map-index-with-nodes
   (testing
@@ -549,10 +545,8 @@
       (testing
           "Should contain get calls where the original field pairs were."
        (is (= (#'tmp/convert-nodes-to-template-seq nodes 'G_xx)
-              '("<div><div id=\"" (get G_xx :G_3001) "\"></div><div id=\"" (get G_xx :G_3002) "\">" (get G_xx :name) "</div></div>"))))
-      )
-    )
-  )
+              '("<div><div id=\"" (get G_xx :G_3001) "\"></div><div id=\"" (get G_xx :G_3002) "\">"
+                (get G_xx :name) "</div></div>")))))))
 
 (deftest test-tfn
   (testing
