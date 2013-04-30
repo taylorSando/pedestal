@@ -38,6 +38,7 @@
   (if (fn? messages) (messages e) messages))
 
 (defn send-on
+  ""
   ([event-type dc input-queue transform-name messages]
      (send-on event-type
               dc
@@ -45,17 +46,27 @@
               (fn [e] (map (partial msg/add-message-type transform-name)
                           (produce-messages messages e)))))
   ([event-type dc input-queue messages]
+     "Listen for event-type on the dom content item, and pass messages to the input queue."
+     ;; A domina listener function
+     ;; Listens for events associated with the dom item sent in
+     ;; using the event-type
      (event/listen! (-coerce-to-dom-content dc)
                     event-type
                     (fn [e]
+                      ;; Cancel the default dom action associated with the event                      
                       (event/prevent-default e)
+                      ;; For every message, either use the message, or if it's a function,
+                      ;; Call the message with the dom event, which should return a message
                       (doseq [message (produce-messages messages e)]
+                        ;; In either case, put the new message on the app input queue
                         (p/put-message input-queue message))))))
 
 (defn send-on-click [& args]
+  "Convenience function for click events, forwards the arguments to send-on"
   (apply send-on :click args))
 
 (defn send-on-keyup [& args]
+  "Convenience function for key up events, forwards the arguments to send-on"
   (apply send-on :keyup args))
 
 (defn collect-inputs [input-map]
